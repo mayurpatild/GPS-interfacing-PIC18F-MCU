@@ -1,194 +1,197 @@
-//Program to interface GSM Modem with PIC18F4550 Microcontroller
-//This code takes four choices as four inputs
-//Choice 1 : Test the simple AT Command.
-//Choice 2 : Find out the IMEI number of the GSM Modem.
-//Choice 3 : Connect a call to a GSM mobile number.
-//Choice 4 : Send a text message to a mobile number.
-#define FREQ 12000000
-#define baud 9600
-#define spbrg_value (((FREQ/64)/baud)-1)
-#define rs LATA.F0
-#define rw LATA.F1
-#define en LATA.F2
-#define lcdport LATB
-void tx_data(unsigned char);
-unsigned char rx_data();
-void lcd_ini();
-void lcdcmd(unsigned char);
-void lcddata(unsigned char);
-void gsm_cmd(unsigned char *);
-void output(void);
-unsigned char value=0;
-int i=0,j,k,temp,flag,choice;
-unsigned char *starting_text="Enter choice=";
-unsigned char *dial_text="Dialing...";
-unsigned char *at_cmd="AT";
-unsigned char *imei_cmd="AT+GSN";
-unsigned char *call_cmd="ATD9xxxxxxxxx;";   // Provide a 10-Digit Mobile Number
-unsigned char *sms_format="AT+CMGF=1";
-unsigned char *sms_write="AT+CMGS=\"xxxxxxxxxx\"";  // 10-Digit Mobile Number
-unsigned char *sms="Hello";
-unsigned char *sms_report="SMS Sent...";
-unsigned char sms_terminate=0x1A;
-unsigned char enter=0x0D;
-unsigned char *data;
-void main()
-{
-	TRISB=0;				// Set Port B as output port
-	LATB=0;
-	TRISA=0;
-	LATA=0;
-	TRISD=0xFF;
-	LATD=0;
-	SPBRG=spbrg_value;			// Fill SPBRG register to set the baud rate
-	RCSTA.SPEN=1;				// To activate serial port (Tx and Rx pins)
-	TXSTA.TXEN=1;				// Activate Transmissiom
-	RCSTA.CREN=1;				// Activate Reception
-	PIE1.RCIE=1;				// Enable Reception interrupt
-	INTCON.GIE=1;				// Enable Global interrupt
-	INTCON.PEIE=1;				// Enable Peripheral interrupt
+//Program to interface GPS Module with PIC18F4550 Microcontroller
+ 
+
+
+#include<pic18f4550.h>
+#include<string.h>
+#include<stdio.h>
+#include<stdlib.h>
+#include "Configuration_Header_File.h"
+#include "LCD_20x4_H_file.h"
+#include "USART_Header_File.h"
+
+unsigned long int get_gpstime();
+float get_latitude(unsigned char);
+float get_longitude(unsigned char);
+float get_altitude(unsigned char);
+void convert_time_to_UTC(unsigned long int);
+float convert_to_degrees(float);
+
+#define GGA_Buffer_Size 80
+#define GGA_Pointers_Size 20
+
+char GGA_Buffer[GGA_Buffer_Size];              /* to store GGA string */
+char GGA_CODE[3];
+
+unsigned char N_S, E_W;                        /* for getting direction polarity */
+unsigned char GGA_Pointers[GGA_Pointers_Size]; /* to store instances of ',' */
+char CommaCounter;
+char Data_Buffer[15];
+volatile unsigned int GGA_Index;
+volatile unsigned char	IsItGGAString	= 0;
+
+void main(void) {
+	unsigned long int Time;
+	float Latitude,Longitude,Altitude;
+	char GPS_Buffer[15];
+    
+	OSCCON = 0x72;      /* use internal osc. of 8MHz Freq. */
+	LCD_Init();
+	INTCONbits.GIE=1;   /* enable Global Interrupt */
+	INTCONbits.PEIE=1;  /* enable Peripheral Interrupt */
+	PIE1bits.RCIE=1;    /* enable Receive Interrupt */
+	USART_Init(9600);
 	
-	lcd_ini();
-	while(1)
-	{
-		k=0;
-		lcdcmd(0x80);
-		while(starting_text[k]!='\0')
-		{
-			lcddata(starting_text[k]);
-			k++;
-		}
+	while(1){
+	memset(GPS_Buffer,0,15);
+	LCD_String_xy(1,0,"UTC Time: ");
+	Time = get_gpstime();            /* Extract Time */
+	convert_time_to_UTC(Time);       /* convert time to UTC */
+	LCD_String(Data_Buffer);
+	LCD_String("  ");
 		
-		//Check inputs
-//Choice 1
-		if(PORTD.F0)
-		{
-			gsm_cmd(at_cmd);
-			output();
-			Delay_ms(1000);
-		}
-
-		//Choice 2
-		if(PORTD.F1)
-		{
-			gsm_cmd(imei_cmd);
-			output();
-			Delay_ms(1000);
-		}
-                                
-		//Choice 3		
-		if(PORTD.F2)
-		{
-			gsm_cmd(call_cmd);
-			output();
-			Delay_ms(1000);
-		}
-//Choice 4
-		if(PORTD.F3)
-		{
-			gsm_cmd(sms_format);
-			output();
-			Delay_ms(1000);
-gsm_cmd(sms_write);
-			output();
-			Delay_ms(1000);
-gsm_cmd(sms);
-			output();
-			tx_data(0x1A);
-			Delay_ms(1000);
-		}
-}
-}
-void gsm_cmd(unsigned char *string)
-{
-	i=0;j=0;
-	while(string[i]!='\0')
-	{
-		temp=0;
-		if(string[i]==0x5C)		// Not to send '\' cahracter
-		i++;
-		tx_data(string[i]);		// Send by serial communication
-		i++;
-		while(temp!=1);
-	}
-	temp=0;
-	tx_data(enter);				// Send ASCII code for 'Enter' key
-	while(temp!=1);
-}
-void output(void)				// To print data on LCD
-{
-	lcdcmd(0x01);
-	i=-1;flag=0;
-	while(i<j)
-	{
-		if(flag>1)
-		{
-			flag=0;
-			Delay_ms(500);
-			lcdcmd(0x01);
-			lcdcmd(0x80);
-		}
-		if(data[i]==0x0A)		// This condition is to avoid double Enter
-// during execution of a command
-		{
-			flag++;
-			lcdcmd(0xc0);
-		}
-		if(data[i]=='>'||data[i]=='"')	// Not to print this character
-		{
-			i++;
-			lcdcmd(0xc0);
-		}
-		if(data[i]!=0x0D&&data[i]!=0x0A&&data[i]!=0x1A)	  // Condition to print the data 
-							// except 'Enter','New line' and 'Submit'
+	LCD_String_xy(2,0,"Lat: ");
+	Latitude = get_latitude(GGA_Pointers[0]); 	/* Extract Latitude */
+	Latitude = convert_to_degrees(Latitude);  	/* convert raw latitude in degree decimal*/
+	sprintf(GPS_Buffer,"%.05f",Latitude);		/* convert float value to string */
+	LCD_String(GPS_Buffer);            			/* display latitude in degree */
+	memset(GPS_Buffer,0,15);
 		
-		{
-			lcddata(data[i]);
-			i++;
-		}
-		else
-			i++;
-		Delay_ms(300);
+	LCD_String_xy(3,0,"Long: ");
+	Longitude = get_longitude(GGA_Pointers[2]);	/* Extract Latitude */
+	Longitude = convert_to_degrees(Longitude);	/* convert raw longitude in degree decimal*/
+	sprintf(GPS_Buffer,"%.05f",Longitude);		/* convert float value to string */
+	LCD_String(GPS_Buffer);            			/* display latitude in degree */
+	memset(GPS_Buffer,0,15);
+			
+	LCD_String_xy(4,0,"Alt: ");
+	Altitude = get_altitude(GGA_Pointers[7]); 	/* Extract Latitude */
+	sprintf(GPS_Buffer,"%.2f",Altitude);		/* convert float value to string */
+	LCD_String(GPS_Buffer);            			/* display latitude in degree */
+
 	}
-	lcdcmd(0x01);
-}
-void tx_data(unsigned char serial_data)		// Transmit data function
-{
-	TXREG=serial_data;
-	while(PIR1.TXIF==0);
 }
 
-void interrupt()
-{
-	data[j]=RCREG;			// Store the data into array when Reception interrupt occurs
-	value=RCREG;
-	j++;
-	temp=1;
-}
-void lcd_ini()
-{
-	lcdcmd(0x38);		// Configure the LCD in 8-bit mode, 2 line and 5x7 font
-	lcdcmd(0x0C);		// Display On and Cursor Off
-	lcdcmd(0x01);		// Clear display screen
-	lcdcmd(0x06);		// Increment cursor
-	lcdcmd(0x80);		// Set cursor position to 1st line, 1st column
-}
-void lcdcmd(unsigned char cmdout)
-{
-	lcdport=cmdout;		//Send command to lcdport=PORTB
-	rs=0;						
-	rw=0;
-	en=1;
-	Delay_ms(10);
-	en=0;
-}
-void lcddata(unsigned char dataout)
-{
-	lcdport=dataout;	//Send data to lcdport=PORTB
-	rs=1;
-	rw=0;
-	en=1;
-	Delay_ms(10);
-	en=0;
+unsigned long int get_gpstime(){
+	unsigned char index;
+	unsigned char Time_Buffer[15];
+	unsigned long int _Time;
+	
+	/* parse Time in GGA string stored in buffer */
+	for(index = 0;GGA_Buffer[index]!=','; index++){		
+		Time_Buffer[index] = GGA_Buffer[index];
+	}
+	_Time= atol(Time_Buffer);        /* convert string of Time to integer */
+	return _Time;                    /* return integer raw value of Time */        
 }
 
+float get_latitude(char lat_pointer){
+	unsigned char lat_index = lat_pointer+1;	/* index pointing to the latitude */
+	unsigned char index = 0;
+	char Lat_Buffer[15];
+	float _latitude;
+
+	/* parse Latitude in GGA string stored in buffer */
+	for(;GGA_Buffer[lat_index]!=',';lat_index++){
+		Lat_Buffer[index]= GGA_Buffer[lat_index];
+		index++;
+	}
+	lat_index++;
+	N_S = GGA_Buffer[lat_index];
+	_latitude = atof(Lat_Buffer);     /* convert string of latitude to float */
+	return _latitude;                 /* return float raw value of Latitude */
+}
+
+float get_longitude(unsigned char long_pointer){
+	unsigned char long_index;
+	unsigned char index = long_pointer+1;		/* index pointing to the longitude */
+	char Long_Buffer[15];
+	float _longitude;
+	long_index=0;
+	
+	/* parse Longitude in GGA string stored in buffer */
+	for( ; GGA_Buffer[index]!=','; index++){
+		Long_Buffer[long_index]= GGA_Buffer[index];
+		long_index++;
+	}
+	long_index++;
+	E_W = GGA_Buffer[long_index];
+	_longitude = atof(Long_Buffer);    /* convert string of longitude to float */
+	return _longitude;                /* return float raw value of Longitude */
+}
+
+float get_altitude(unsigned char alt_pointer){
+	unsigned char alt_index;
+	unsigned char index = alt_pointer+1;		/* index pointing to the altitude */
+	char Alt_Buffer[12];
+	float _Altitude;
+	alt_index=0;
+	
+	/* parse Altitude in GGA string stored in buffer */
+	for( ; GGA_Buffer[index]!=','; index++){
+		Alt_Buffer[alt_index]= GGA_Buffer[index];
+		alt_index++;
+	}
+	_Altitude = atof(Alt_Buffer);   /* convert string of altitude to float */ 
+	return _Altitude;					/* return float raw value of Altitude */
+}
+
+void convert_time_to_UTC(unsigned long int UTC_Time)
+{
+	unsigned int hour, min, sec;
+		
+	hour = (UTC_Time / 10000);                  	/* extract hour from integer */
+	min = (UTC_Time % 10000) / 100;             	/* extract minute from integer */
+	sec = (UTC_Time % 10000) % 100;             	/* extract second from integer*/
+
+	sprintf(Data_Buffer, "%d:%d:%d", hour,min,sec); /* store UTC time in buffer */
+	
+}
+
+float convert_to_degrees(float NMEA_lat_long){
+	
+	float minutes, dec_deg, decimal;
+	int degrees;
+	float position;
+
+	degrees = (int)(NMEA_lat_long/100.00);
+	minutes = NMEA_lat_long - degrees*100.00;
+	dec_deg = minutes / 60.00;
+	decimal = degrees + dec_deg;
+	if (N_S == 'S' || E_W == 'W') { // return negative
+		decimal *= -1;
+    }	
+	/* convert raw latitude/longitude into degree format */
+	return decimal;
+}
+
+void interrupt Serial_ISR()   
+{
+	 
+	if(RCIF){
+		GIE  = 0;							/* Disable global interrupt */
+		unsigned char received_char = RCREG;
+        if(RCSTAbits.OERR){                 /* check if any overrun occur due to continuous reception */           
+            CREN = 0;
+            NOP();
+            CREN=1;
+        }
+        
+		if(received_char =='$'){     	    /* check for '$' */
+			GGA_Index = 0;
+			IsItGGAString = 0;
+			CommaCounter = 0;
+		}
+		else if(IsItGGAString == 1){        /* if true save GGA info. into buffer */
+			if(received_char == ',' ) GGA_Pointers[CommaCounter++] = GGA_Index;    /* store instances of ',' in buffer */
+			GGA_Buffer[GGA_Index++] = received_char;
+        }
+		else if(GGA_CODE[0] == 'G' && GGA_CODE[1] == 'G' && GGA_CODE[2] == 'A'){ /* check for GGA string */
+			IsItGGAString = 1;
+			GGA_CODE[0] = 0; GGA_CODE[1] = 0; GGA_CODE[2] = 0;	
+		}
+		else{
+			GGA_CODE[0] = GGA_CODE[1];  GGA_CODE[1] = GGA_CODE[2]; GGA_CODE[2] = received_char; 
+		}	
+	}
+}
